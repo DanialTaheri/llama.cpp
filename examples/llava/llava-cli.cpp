@@ -1,7 +1,7 @@
 #include "ggml.h"
 #include "log.h"
 #include "common.h"
-#include "clip.h"
+#include "siglip.h"
 #include "llava.h"
 #include "llama.h"
 

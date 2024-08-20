@@ -1460,8 +1460,8 @@ libllava.a: examples/llava/llava.cpp \
 llama-llava-cli: examples/llava/llava-cli.cpp \
 	examples/llava/llava.cpp \
 	examples/llava/llava.h \
-	examples/llava/clip.cpp \
-	examples/llava/clip.h \
+	examples/llava/siglip.cpp \
+	examples/llava/siglip.h \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) $< $(filter-out %.h $<,$^) -o $@ $(LDFLAGS) -Wno-cast-qual
 
