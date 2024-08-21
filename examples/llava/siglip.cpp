@@ -632,7 +632,7 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
     struct ggml_tensor * inp_raw = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, image_size_width, image_size_height, 3, batch_size);
     ggml_set_name(inp_raw, "inp_raw");
     ggml_set_input(inp_raw);
-
+    print_tensor_info(inp_raw, "inp_raw");
     struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
 
     inp = ggml_reshape_3d(ctx0, inp, num_patches, hidden_size, batch_size);
@@ -830,7 +830,6 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
 
         int h = (int) sqrt(cur->ne[1]);
         int w = h;
-        std::cout << h << std::endl;
         cur = ggml_reshape_4d(ctx0, cur, cur->ne[0], h, w, cur->ne[2]);
         if (w % 2 == 1) {
             // Create a zero tensor with the appropriate size [n, 1, h, c]
@@ -1664,8 +1663,8 @@ void clip_add_load_image_size(struct clip_ctx * ctx_clip, struct clip_image_size
 
 struct clip_image_size * clip_image_size_init() {
     struct clip_image_size * load_image_size = new struct clip_image_size();
-    load_image_size->width = 448;
-    load_image_size->height = 448;
+    load_image_size->width = 384;
+    load_image_size->height = 384;
     return load_image_size;
 }
 
@@ -2479,13 +2478,16 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
     if(ctx->load_image_size==nullptr){
         ctx->load_image_size= clip_image_size_init();
     }
-    const int pos_w = ctx->load_image_size->width/patch_size;
-    const int pos_h = ctx->load_image_size->height/patch_size;
-
+    const int pos_w = 384/patch_size;
+    const int pos_h = 384/patch_size;
+    // const int pos_w = ctx->load_image_size->width/patch_size;
+    // const int pos_h = ctx->load_image_size->height/patch_size;
+    std::cout << "line 2484" << std::endl;
     {
         struct ggml_tensor * inp_raw = ggml_graph_get_tensor(gf, "inp_raw");
+        std::cout << inp_raw << std::endl;
         float * data = (float *)malloc(ggml_nbytes(inp_raw));
-
+        std::cout << "line 2489" << std::endl;
         for (size_t i = 0; i < imgs->size; i++) {
             const int nx = imgs->data[i].nx;
             const int ny = imgs->data[i].ny;
