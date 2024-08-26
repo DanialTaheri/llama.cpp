@@ -276,6 +276,27 @@ static void print_tensor_info(const ggml_tensor * tensor, const char * prefix = 
             tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3], ggml_type_name(tensor->type));
 }
 
+// void print_tensor(struct ggml_tensor *tensor) {
+//     if (tensor->type != GGML_TYPE_F32) {
+//         std::cerr << "Currently, only float32 tensors are supported for printing." << std::endl;
+//         return;
+//     }
+
+//     float *data = (float *) tensor->data;
+
+//     int n = 1;
+//     for (int i = 0; i < tensor->n_dims; ++i) {
+//         n *= tensor->ne[i];
+//     }
+
+//     for (int i = 0; i < n; ++i) {
+//         std::cout << data[i] << " ";
+//         if ((i + 1) % tensor->ne[0] == 0) {
+//             std::cout << std::endl;
+//         }
+//     }
+// }
+
 static projector_type clip_projector_type_from_string(const std::string & name) {
     for (const auto & kv : PROJECTOR_TYPE_NAMES) { // NOLINT
         if (kv.second == name) {
@@ -403,7 +424,7 @@ struct clip_hparams {
     int32_t patch_size;
     int32_t hidden_size;
     int32_t n_intermediate;
-    int32_t projection_dim;
+    // int32_t projection_dim;
     int32_t n_head;
     int32_t n_layer;
 
@@ -544,7 +565,7 @@ struct clip_vision_model {
     struct ggml_tensor * head_ffn_d_w;
     struct ggml_tensor * head_ffn_u_b;
     struct ggml_tensor * head_ffn_u_w;
-    struct ggml_tensor * head_probe;
+    // struct ggml_tensor * head_probe;
 };
 
 struct clip_ctx {
@@ -632,7 +653,6 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
     struct ggml_tensor * inp_raw = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, image_size_width, image_size_height, 3, batch_size);
     ggml_set_name(inp_raw, "inp_raw");
     ggml_set_input(inp_raw);
-    print_tensor_info(inp_raw, "inp_raw");
     struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
 
     inp = ggml_reshape_3d(ctx0, inp, num_patches, hidden_size, batch_size);
@@ -821,101 +841,56 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
     cur = ggml_add(ctx0, cur, model.head_ffn_u_b);
 
     // residual 2
-    cur = ggml_add(ctx0, embeddings, cur);
+    embeddings = ggml_add(ctx0, embeddings, cur);
 
-    embeddings = cur;
+    // embeddings = cur;
     // llava projector
     if (ctx->has_llava_projector) {
-        cur = ggml_reshape_3d(ctx0, cur, cur->ne[2], cur->ne[1], cur->ne[0]);
+        embeddings = ggml_reshape_3d(ctx0, embeddings, embeddings->ne[2], embeddings->ne[1], embeddings->ne[0]);
 
-        int h = (int) sqrt(cur->ne[1]);
+        print_tensor_info(embeddings, "embeddings");
+        int h = (int) sqrt(embeddings->ne[1]);
         int w = h;
-        cur = ggml_reshape_4d(ctx0, cur, cur->ne[0], h, w, cur->ne[2]);
+        embeddings = ggml_reshape_4d(ctx0, embeddings, embeddings->ne[0], w, h, embeddings->ne[2]);
         if (w % 2 == 1) {
             // Create a zero tensor with the appropriate size [n, 1, h, c]
-            // Check if the tensor of zeros is initiated correctly.
-            struct ggml_tensor* padding = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, cur->ne[0], 1, cur->ne[2], cur->ne[3]);
-            // ggml_set_zero(padding);
-            // Assuming `embeddin` is the original 4D tensor with shape [n, w, h, c]
-            // We want to concatenate it with a zero tensor of shape [n, 1, h, c] along the second dimension (w).
-            // Calculate the new size after concatenation
-            int new_w = cur->ne[1] + 1;  // Original width (w) + 1
+            embeddings = ggml_pad(ctx0, embeddings, 0, 1, 0, 0);
 
-            // Create a new 4D tensor `cur_concat` with the new dimensions
-            struct ggml_tensor * cur_w = ggml_new_tensor_4d(ctx0, cur->type, cur->ne[0], new_w, cur->ne[2], cur->ne[3]);
-            // Create a view for the original `cur` tensor in the new concatenated tensor
-            struct ggml_tensor * dst_lo = ggml_view_4d(ctx0, cur_w, cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3], 
-                                                    cur->nb[1], cur->nb[2], cur->nb[3], 0);
-
-            // Create a view for the zero tensor (1xHxC) in the new concatenated tensor
-            struct ggml_tensor * dst_hi = ggml_view_4d(ctx0, cur_w, cur->ne[0], 1, cur->ne[2], cur->ne[3], 
-                                                    cur_w->nb[1], cur_w->nb[2], cur_w->nb[3], 
-                                                    ggml_element_size(cur_w) * cur->nb[1] * cur->ne[1]);
-
-            // Copy the original tensor `cur` into the first part of the new tensor `cur_w`
-            ggml_cpy(ctx0, cur, dst_lo);
-
-            // Copy the zero tensor into the second part of the new tensor `cur_w`
-            ggml_cpy(ctx0, padding, dst_hi);
-
-
-
-
-            w = cur_w->ne[1]; // update after padding
-            cur = cur_w;
+            w = embeddings->ne[1]; // update after padding
+            // embeddings = embeddings_w;
         }
         
         if (h % 2 == 1) {
-            // Create a zero tensor with the appropriate size [n, w, 1, c]
-            struct ggml_tensor* padding = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1], 1, cur->ne[3]);
-            // ggml_set_zero(padding);
-            
+            embeddings = ggml_pad(ctx0, embeddings, 0, 0, 1, 0);
+            print_tensor_info(embeddings, "embeddings after padding");
 
-            // We want to concatenate it with a zero tensor of shape [n, w, 1, c] along the third dimension (h).
-            // Calculate the new size after concatenation
-            int new_h = cur->ne[2] + 1;  // Original height (h) + 1
-
-            // Create a new 4D tensor `embeddings_concat` with the new dimensions
-            struct ggml_tensor * cur_wh = ggml_new_tensor_4d(ctx0, cur->type, cur->ne[0], cur->ne[1], new_h, cur->ne[3]);
-
-            // Create a view for the original `embeddings` tensor in the new concatenated tensor
-            struct ggml_tensor * dst_lo = ggml_view_4d(ctx0, cur_wh, cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3], 
-                                                    cur->nb[1], cur->nb[2], cur->nb[3], 0);
-
-            // Create a view for the zero tensor (1 height) in the new concatenated tensor
-            struct ggml_tensor * dst_hi = ggml_view_4d(ctx0, cur_wh, cur->ne[0], cur->ne[1], 1, cur->ne[3], 
-                                                    cur_wh->nb[1], cur_wh->nb[2], cur_wh->nb[3], 
-                                                    ggml_element_size(cur_wh) * cur->nb[2] * cur->ne[2]);
-
-            // Copy the original tensor `embeddings` into the first part of the new tensor `embeddings_concat`
-            ggml_cpy(ctx0, cur, dst_lo);
-
-            // Copy the zero tensor into the second part of the new tensor `embeddings_concat`
-            ggml_cpy(ctx0, padding, dst_hi);
-
-            h = cur_wh->ne[2]; // update after padding
-            cur = cur_wh;
+            h = embeddings->ne[2]; // update after padding
+        //     embeddings = embeddings_wh;
         }
-        int c = (int) cur->ne[3];
-        cur = ggml_reshape_4d(ctx0, cur, cur->ne[0], w, h/2, c*2);
-        cur = ggml_cont(ctx0, ggml_permute(ctx0, cur, 0, 2, 1, 3)); // Permute dimensions (0, 2, 1, 3)
-        cur = ggml_reshape_4d(ctx0, cur, cur->ne[0], h/2, w/2, c*4);
-        cur = ggml_reshape_3d(ctx0, cur, cur->ne[0], cur->ne[1]*cur->ne[2], cur->ne[3]);
+        int c = (int) embeddings->ne[3];
+        embeddings = ggml_reshape_4d(ctx0, embeddings, embeddings->ne[0], w, h/2, c*2);
+        embeddings = ggml_cont(ctx0, ggml_permute(ctx0, embeddings, 0, 2, 1, 3)); // Permute dimensions (0, 2, 1, 3)
+        embeddings = ggml_reshape_4d(ctx0, embeddings, embeddings->ne[0], h/2, w/2, c*4);
+        embeddings = ggml_reshape_3d(ctx0, embeddings, embeddings->ne[0], embeddings->ne[1]*embeddings->ne[2], embeddings->ne[3]);
 
-        embeddings = ggml_permute(ctx0, cur, 2, 1, 0, 3);
+        embeddings = ggml_permute(ctx0, embeddings, 2, 1, 0, 3);
+        print_tensor_info(embeddings, "embeddings 913");
 
+        // for (int i=0;i<20;++i){
+        //     std::cout << ((float *) model.mm_1_w)[i] << " ";
+        // }
+
+        // for (int i=0;i<20;++i){
+        //     std::cout << ((float *) model.mm_2_w)[i] << " ";
+        // }
         // llava projector
         if (ctx->proj_type == PROJECTOR_TYPE_MLP) {
-            // First LayerNorm
+            // // First LayerNorm
             embeddings = ggml_norm(ctx0, embeddings, eps);
-            embeddings = ggml_add(ctx0, ggml_mul(ctx0, embeddings, model.mm_1_w),
-                                model.mm_1_b);
-
-            embeddings = ggml_mul_mat(ctx0, model.mm_2_w, embeddings);
-            embeddings = ggml_add(ctx0, embeddings, model.mm_2_b);
+            embeddings = ggml_add(ctx0, ggml_mul(ctx0, embeddings, model.mm_1_w), model.mm_1_b);
+            embeddings = ggml_add(ctx0, ggml_mul_mat(ctx0, model.mm_2_w, embeddings), model.mm_2_b);
             embeddings = ggml_gelu(ctx0, embeddings);
-            embeddings = ggml_mul_mat(ctx0, model.mm_4_w, embeddings);
-            embeddings = ggml_add(ctx0, embeddings, model.mm_4_b);
+            embeddings = ggml_add(ctx0, ggml_mul_mat(ctx0, model.mm_4_w, embeddings), model.mm_4_b);
             print_tensor_info(embeddings, "embeddings 910");
             // embeddings = ggml_reshape_3d(ctx0, embeddings, embeddings->ne[2], embeddings->ne[1], embeddings->ne[0]);
             print_tensor_info(embeddings, "embeddings 913");
@@ -1151,7 +1126,7 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
 
     // build the graph
     ggml_build_forward_expand(gf, embeddings);
-
+    print_tensor_info(embeddings, "embeddings 1152");
     ggml_free(ctx0);
 
     return gf;
@@ -1408,7 +1383,7 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
         hparams.patch_size     = get_u32(ctx, KEY_PATCH_SIZE);
         // hparams.projection_dim = get_u32(ctx, format(KEY_PROJ_DIM, "vision"));
         hparams.eps            = get_f32(ctx, format(KEY_LAYER_NORM_EPS, "vision"));
-
+        std::cout << "inside vision_encoder" << std::endl;
         try {
             int idx = get_key_idx(ctx, KEY_IMAGE_GRID_PINPOINTS);
             int n = gguf_get_arr_n(ctx, idx);
@@ -1452,7 +1427,7 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             LOG_TEE("patch_size         %d\n", hparams.patch_size);
             LOG_TEE("v_hidden_size      %d\n", hparams.hidden_size);
             LOG_TEE("v_n_intermediate   %d\n", hparams.n_intermediate);
-            LOG_TEE("v_projection_dim   %d\n", hparams.projection_dim);
+            // LOG_TEE("v_projection_dim   %d\n", hparams.projection_dim);
             LOG_TEE("v_n_head           %d\n", hparams.n_head);
             LOG_TEE("v_n_layer          %d\n", hparams.n_layer);
             LOG_TEE("v_eps              %f\n", hparams.eps);
@@ -1522,27 +1497,31 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             LOG_TEE("%s: failed to load vision model tensors\n", __func__);
         }
         std::cout << "line 1209" << std::endl;
+        std::cout << new_clip->proj_type << std::endl;
         // LLaVA projection
         if (new_clip->proj_type == PROJECTOR_TYPE_MLP || new_clip->proj_type == PROJECTOR_TYPE_MLP_NORM) {
             try {
+                std::cout << "line 1552" << std::endl;
                 vision_model.mm_0_w              = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 0, "weight"));
                 vision_model.mm_0_b              = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 0, "bias"));
-            } catch (std::runtime_error & e) {  }
+            } catch (std::runtime_error & /*e*/) {  }
             try {
+                std::cout << "line 1557" << std::endl;
                 // Yi-type llava
                 vision_model.mm_1_w = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 1, "weight"));
                 vision_model.mm_1_b = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 1, "bias"));
             } catch (std::runtime_error & /*e*/) { }
             try {
+                std::cout << "line 1563" << std::endl;
                 // missing in Yi-type llava
                 vision_model.mm_2_w              = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 2, "weight"));
                 vision_model.mm_2_b              = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 2, "bias"));
             } catch (std::runtime_error & /*e*/) { }
-            try {
-                // Yi-type llava
-                vision_model.mm_3_w = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 3, "weight"));
-                vision_model.mm_3_b = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 3, "bias"));
-            } catch (std::runtime_error & /*e*/) { }
+            // try {
+            //     // Yi-type llava
+            //     vision_model.mm_3_w = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 3, "weight"));
+            //     vision_model.mm_3_b = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 3, "bias"));
+            // } catch (std::runtime_error & /*e*/) { }
             try {
                 // Yi-type llava
                 vision_model.mm_4_w = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 4, "weight"));
@@ -1550,7 +1529,7 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             } catch (std::runtime_error & /*e*/) { }
             try {
                 vision_model.image_newline = get_tensor(new_clip->ctx_data, TN_IMAGE_NEWLINE);
-                // LOG_TEE("%s: image_newline tensor (llava-1.6) found\n", __func__);
+                LOG_TEE("%s: image_newline tensor (llava-1.6) found\n", __func__);
             } catch (std::runtime_error & /*e*/) { }
         } else if (new_clip->proj_type == PROJECTOR_TYPE_LDP) {
             // MobileVLM projection
@@ -2017,7 +1996,7 @@ static std::pair<int, int> uhd_best_grid(const int max_slice_nums, const int mul
 //    -> https://arxiv.org/pdf/2403.11703
 //    -> https://github.com/thunlp/LLaVA-UHD
 //    -> https://github.com/thunlp/LLaVA-UHD/blob/302301bc2175f7e717fb8548516188e89f649753/llava_uhd/train/llava-uhd/slice_logic.py#L118
-static std::vector<std::vector<clip_image_u8 *>> uhd_slice_image(const clip_image_u8 * img, const int max_slice_nums=9, const int scale_resolution=448, const int patch_size=14) {
+static std::vector<std::vector<clip_image_u8 *>> uhd_slice_image(const clip_image_u8 * img, const int max_slice_nums=9, const int scale_resolution=384, const int patch_size=14) {
     const std::pair<int, int> original_size={img->nx,img->ny};
     const int original_width = img->nx;
     const int original_height = img->ny;
@@ -2083,7 +2062,7 @@ static std::vector<std::vector<clip_image_u8 *>> uhd_slice_image(const clip_imag
 
 int clip_uhd_num_image_embeds_col(struct clip_ctx * ctx_clip) {
     const int max_slice_nums=9;
-    const int scale_resolution=448;
+    const int scale_resolution=384;
     const int original_width = ctx_clip->load_image_size->width;
     const int original_height = ctx_clip->load_image_size->height;
     const float log_ratio = log(1.0*original_width/original_height);
@@ -2485,7 +2464,9 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
     std::cout << "line 2484" << std::endl;
     {
         struct ggml_tensor * inp_raw = ggml_graph_get_tensor(gf, "inp_raw");
+        print_tensor_info(inp_raw, "inp_raw");
         std::cout << inp_raw << std::endl;
+        
         float * data = (float *)malloc(ggml_nbytes(inp_raw));
         std::cout << "line 2489" << std::endl;
         for (size_t i = 0; i < imgs->size; i++) {
@@ -2494,7 +2475,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
             if (!ctx->has_minicpmv_projector) {
                 GGML_ASSERT(nx == image_size && ny == image_size);
             }
-
+        std::cout << "line 2499" << std::endl;
             const int n = nx * ny;
 
             for (int b = 0; b < batch_size; b++) {
@@ -2506,6 +2487,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                     }
                 }
             }
+            std::cout << "line 2511" << std::endl;
         }
         ggml_backend_tensor_set(inp_raw, data, 0, ggml_nbytes(inp_raw));
         free(data);
@@ -2583,15 +2565,37 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         }
 
         {
-            struct ggml_tensor * patches = ggml_graph_get_tensor(gf, "patches");
-            int* patches_data = (int*)malloc(ggml_nbytes(patches));
-            for (int i = 0; i < num_patches; i++) {
-                patches_data[i] = i + 1;
-            }
-            ggml_backend_tensor_set(patches, patches_data, 0, ggml_nbytes(patches));
-            free(patches_data);
+            // struct ggml_tensor * patches = ggml_graph_get_tensor(gf, "patches");
+            // print_tensor_info(patches, "patches");
+            // int* patches_data = (int*)malloc(ggml_nbytes(patches));
+            // for (int i = 0; i < num_patches; i++) {
+            //     patches_data[i] = i + 1;
+            // }
+            // ggml_backend_tensor_set(patches, patches_data, 0, ggml_nbytes(patches));
+            // free(patches_data);
+                    // inspired from siglip:
+        //    -> https://huggingface.co/HuggingFaceM4/siglip-so400m-14-980-flash-attn2-navit
+        //    -> https://huggingface.co/HuggingFaceM4/siglip-so400m-14-980-flash-attn2-navit/blob/d66538faeba44480d0bfaa42145eef26f9423199/modeling_siglip.py#L316
+        // struct ggml_tensor * positions = ggml_graph_get_tensor(gf, "positions");
+        // int* positions_data = (int*)malloc(ggml_nbytes(positions));
+        // int bucket_coords_h[70];
+        // int bucket_coords_w[70];
+        // for (int i = 0; i < pos_h; i++){
+        //     bucket_coords_h[i] = std::floor(70.0*i/pos_h);
+        // }
+        // for (int i = 0; i < pos_w; i++){
+        //     bucket_coords_w[i] = std::floor(70.0*i/pos_w);
+        // }
+        // for (int i = 0, id = 0; i < pos_h; i++){
+        //     for (int j = 0; j < pos_w; j++){
+        //         positions_data[id++] = bucket_coords_h[i]*70 + bucket_coords_w[j];
+        //     }
+        // }
+        // ggml_backend_tensor_set(positions, positions_data, 0, ggml_nbytes(positions));
+        // free(positions_data);
         }
     }
+    std::cout << "line 2620" << std::endl;
 
     if (ggml_backend_is_cpu(ctx->backend)) {
         ggml_backend_cpu_set_n_threads(ctx->backend, n_threads);
@@ -2604,13 +2608,13 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
 #endif
 
     ggml_backend_graph_compute(ctx->backend, gf);
-
+    
     // the last node is the embedding tensor
     struct ggml_tensor * embeddings = gf->nodes[gf->n_nodes - 1];
-
+    print_tensor_info(embeddings, "embeddings 2636");
     // copy the embeddings to the location passed by the user
     ggml_backend_tensor_get(embeddings, vec, 0, ggml_nbytes(embeddings));
-
+    print_tensor_info(embeddings, "embeddings 2639");
     return true;
 }
 
