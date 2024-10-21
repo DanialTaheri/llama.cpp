@@ -6,6 +6,9 @@ import re
 import torch
 import numpy as np
 from gguf import *
+from typing import Any, ContextManager, cast 
+from safetensors import safe_open
+from safetensors.torch import save_file
 from transformers import CLIPModel, CLIPProcessor, CLIPVisionModel
 
 TEXT = "clip.text"
@@ -15,6 +18,17 @@ VISION = "clip.vision"
 def k(raw_key: str, arch: str) -> str:
     return raw_key.format(arch=arch)
 
+def load_model(file_path, file_type=None):
+    if file_type == 'safetensor' or is_safetensor_file(file_path):
+        tensors = {}
+        with cast(ContextManager[Any], safe_open(file_path, framework="pt", device="cpu")) as f:
+            for key in f.keys():
+                tensors[key] = f.get_tensor(key).clone()
+                # output shape
+                print(f"{key} : {tensors[key].shape}")
+        return tensors, 'safetensor'
+    else:
+        return torch.load(file_path, map_location=torch.device('cpu')), 'pytorch'
 
 def should_skip_tensor(name: str, has_text: bool, has_vision: bool, has_llava: bool) -> bool:
     if name in (
@@ -97,7 +111,6 @@ ap.add_argument('--image-std', type=float, nargs='+', help='Standard deviation o
 
 # with proper
 args = ap.parse_args()
-
 
 if args.text_only and args.vision_only:
     print("--text-only and --image-only arguments cannot be specified at the same time.")
@@ -275,7 +288,8 @@ fout.add_bool("clip.use_gelu", use_gelu)
 
 if has_llava_projector:
     model.vision_model.encoder.layers.pop(-1)  # pyright: ignore[reportAttributeAccessIssue]
-    projector = torch.load(args.llava_projector)
+    projector, _ = load_model(args.llava_projector, 'safetensor')
+    #projector = torch.load(args.llava_projector)
     for name, data in projector.items():
         name = get_tensor_name(name)
         # pw and dw conv ndim==4
